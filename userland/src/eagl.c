@@ -613,6 +613,7 @@ surface_mirrored(struct eagl *e, struct image *image)
 		return false;
 	}
 	glBindTexture(GL_TEXTURE_2D, (GLuint)bound);
+	image->shared = true;
 	e->shared++;
 	return true;
 }
@@ -683,7 +684,7 @@ surface_to_texture(struct eagl *e, struct image *image)
 	uint8_t *base, *flipped = NULL;
 	bool alpha_first = image->alpha_first && !planar && pixel == 4;
 
-	if (image->shared) {
+	if (image->shared || image->mirror != 0) {
 		return;
 	}
 	if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL) != 0) {
@@ -3992,7 +3993,7 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
 	 */
 	began = now_us();
-	if (surface_mirrored(e, image) || !surface_shared(e, image)) {
+	if (!surface_mirrored(e, image) && !surface_shared(e, image)) {
 		surface_changed(e, image);              /* (what it adds up to now) */
 		surface_to_texture(e, image);
 	}

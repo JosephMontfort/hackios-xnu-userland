@@ -1250,6 +1250,10 @@ redwood_init(void)
 				say("redwood: caenv: %s=%s for the window server\n", setting, equals + 1);
 			}
 		}
+		extern int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
+		#define MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK 4
+		memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 1024, NULL, 0);
+		say("redwood: set backboardd Jetsam memory limit to 1024 MB\n");
 		opengl_es();
 		window_server_fixes();
 		/*

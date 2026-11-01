@@ -3992,7 +3992,7 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
 	 */
 	began = now_us();
-	if (surface_mirrored(e, image) || !surface_shared(e, image)) {
+	if (!surface_shared(e, image) && !surface_mirrored(e, image)) {
 		surface_changed(e, image);              /* (what it adds up to now) */
 		surface_to_texture(e, image);
 	}

@@ -1097,6 +1097,12 @@ redwood_springboard_init(void)
 		});
 		return;
 	}
+#ifndef MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK
+#define MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK 4
+#endif
+	extern int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
+	memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 1024, NULL, 0);
+	say("redwood: set SpringBoard Jetsam memory limit to 1024 MB\n");
 	/*
 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
 	 * (/var/jb/usr/lib/TweakLoader.dylib) reads /var/jb/usr/lib/TweakInject and opens the tweaks

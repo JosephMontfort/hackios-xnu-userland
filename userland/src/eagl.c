@@ -127,7 +127,6 @@ typedef GLDEBUGPROC GLDEBUGPROCKHR;
 #define GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE 0x8cd0
 #define GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME 0x8cd1
 #define GL_COLOR_ATTACHMENT0            0x8ce0
-#define GL_NO_ERROR                     0
 #define GL_FRAMEBUFFER_COMPLETE         0x8cd5
 #define GL_FRAMEBUFFER                  0x8d40
 #define GL_SYNC_GPU_COMMANDS_COMPLETE   0x9117
@@ -138,7 +137,7 @@ typedef GLDEBUGPROC GLDEBUGPROCKHR;
 
 struct eagl;
 static int eagl_tracing;                /* this frame's calls are written down (boot-arg gltrace=FIRST-LAST) */
-static int frame_lines = 1;                 /* boot-arg glframes=1: a line for every frame (see frame_end()) */
+static int frame_lines;                 /* boot-arg glframes=1: a line for every frame (see frame_end()) */
 static int latency_lines;               /* boot-arg touch_lat=1: when every frame began and ended (see frame_end()) */
 static uint64_t slow_calls_us;          /* boot-arg glslow=US: a line for every call that takes longer (eagl_leave()) */
 static uint64_t call_began_us;          /* (when the call in progress began) */
@@ -2117,16 +2116,8 @@ vblur_level(struct eagl *e, int from)
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, chain->level[to], 0);
 		chain->level_width[to] = w;
 		chain->level_height[to] = h;
-		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE) {
-			say("redwood-gl: vblur_level FBO %u INCOMPLETE status 0x%x (level %d %dx%d)\n",
-			    chain->framebuffer[to], status, to, w, h);
-		}
 	}
 	source = from == 0 ? picture : chain->level[from];
-	say("redwood-gl: vblur_level: pic=%u lvl %d->%d (%dx%d), fbo=%u tex=%u src=%u\n",
-	    picture, from, to, chain->level_width[to], chain->level_height[to],
-	    chain->framebuffer[to], chain->level[to], source);
 	glGetIntegerv(GL_VIEWPORT, view);
 	glGetIntegerv(GL_SCISSOR_BOX, box);
 	scissored = glIsEnabled(GL_SCISSOR_TEST);
@@ -2140,12 +2131,7 @@ vblur_level(struct eagl *e, int from)
 	glUniform2f(e->halve_texel, 1.0f / (float)(from == 0 ? chain->width : chain->level_width[from]),
 	    1.0f / (float)(from == 0 ? chain->height : chain->level_height[from]));
 	glDrawArrays(GL_TRIANGLES, 0, 3);
-	GLenum err = glGetError();
-	if (err != GL_NO_ERROR) {
-		say("redwood-gl: vblur_level glDrawArrays ERROR 0x%x\n", err);
-	}
 	chain->made = to + 1;
-	glFlush();
 	/* back as it was */
 	glBindTexture(GL_TEXTURE_2D, picture);
 	glUseProgram(0);
@@ -2453,7 +2439,7 @@ vblur_draw_begin(struct eagl *e, struct vblur_chain *chain, GLint enabled[4])
 			glEnableVertexAttribArray(i);
 		}
 	}
-	if (told++ < 100) {
+	if (told++ < 4) {
 		const uint8_t *at = e->arrays[3].pointer;
 		float first[2] = { 0, 0 };
 
@@ -2461,10 +2447,10 @@ vblur_draw_begin(struct eagl *e, struct vblur_chain *chain, GLint enabled[4])
 			memcpy(first, at, sizeof(first));
 		}
 		say("redwood-gl: a blur whose radius varies, read by its mask: %d levels of texture %u (%d x %d), radius %g, numbers %g %g "
-		    "%g; mask corner %g %g, fbo=%u (call %u)\n", levels, chain->picture, chain->width, chain->height,
+		    "%g; the mask's coordinates at the first corner %g %g\n", levels, chain->picture, chain->width, chain->height,
 		    (double)function_values[FUNCTION_VARIABLE_BLUR][0], (double)function_values[FUNCTION_VARIABLE_BLUR][1],
 		    (double)function_values[FUNCTION_VARIABLE_BLUR][2], (double)function_values[FUNCTION_VARIABLE_BLUR][3],
-		    (double)first[0], (double)first[1], e->framebuffer, told);
+		    (double)first[0], (double)first[1]);
 	}
 	if (vblur_on == 2 && told <= 2) {
 		/* the mask itself, for the log: a pixel in every twelve, blue green red opacity */
@@ -2866,10 +2852,10 @@ plain_draw_begin(struct eagl *e, GLint enabled[4])
 
 		vblur_level(e, (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0]);
 		census_draw(e, function, CENSUS_LEVEL);
-		if (told++ < 100) {
-			say("redwood-gl: a blur whose radius varies: level %d of texture %u made of level %d (call %u)\n",
+		if (told++ < 8) {
+			say("redwood-gl: a blur whose radius varies: level %d of texture %u made of level %d\n",
 			    (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0] + 1, e->bound[0],
-			    (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0], told);
+			    (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0]);
 		}
 		return false;
 	}
@@ -4006,12 +3992,12 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
 	 */
 	began = now_us();
-	if (!surface_shared(e, image) && !surface_mirrored(e, image)) {
+	if (surface_mirrored(e, image) || !surface_shared(e, image)) {
 		surface_changed(e, image);              /* (what it adds up to now) */
 		surface_to_texture(e, image);
 	}
 	e->attaching += now_us() - began;
-	if (attached++ < 100) {
+	if (attached++ < 24) {
 		say("redwood-gl: -attachImage: texture %d is IOSurface %u ('%.4s' %d x %d, %zu bytes a row)%s%s\n", texture,
 		    IOSurfaceGetID(surface), (const char *)&(uint32_t){ __builtin_bswap32(pixels) }, image->width, image->height,
 		    IOSurfaceGetBytesPerRow(surface), inverted ? ", drawn inverted" : "", image->shared ? ": its memory" :

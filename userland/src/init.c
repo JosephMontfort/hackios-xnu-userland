@@ -199,8 +199,9 @@ flash_root(const char *dev)
 	    bind_dir(in_image("/xpc"), "/flash/System/Library/xpc"), "our launchd jobs, not iOS's");
 	check(bind_dir(in_image("/hal"), "/flash/System/Library/Audio/Plug-Ins/HAL"),
 	    "our audio device, not Apple's plug-ins");
-	if (stat(in_image("/Wallpaper"), &fw_st) == 0) {
-		bind_dir(in_image("/Wallpaper"), "/flash/Library/Wallpaper/Collections");
+	if (stat(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"), &fw_st) == 0) {
+		bind_dir(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"),
+		    "/flash/Library/Wallpaper/Collections/iOS_16~iphone.wallpaperCollection");
 	}
 	if (stat("/fw", &fw_st) == 0) {
 		/* the audio DSP's firmware and the speakers' configuration, from the RAM image as in a RAM boot */
@@ -1465,8 +1466,9 @@ main(int argc, char **argv, char **envp)
 		if (stat(in_image("/LaunchAngels"), &la_st) == 0) {
 			bind_dir(in_image("/LaunchAngels"), "/System/Library/LaunchAngels");
 		}
-		if (stat(in_image("/Wallpaper"), &la_st) == 0) {
-			bind_dir(in_image("/Wallpaper"), "/Library/Wallpaper/Collections");
+		if (stat(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"), &la_st) == 0) {
+			bind_dir(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"),
+			    "/Library/Wallpaper/Collections/iOS_16~iphone.wallpaperCollection");
 		}
 	}
 	run_rc(in_image("/etc/rc"));

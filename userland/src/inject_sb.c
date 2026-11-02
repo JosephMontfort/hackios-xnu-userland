@@ -1071,6 +1071,12 @@ load_tweaks(void)
 	}
 }
 
+static BOOL
+return_yes(__unused id self, __unused SEL _cmd)
+{
+	return YES;
+}
+
 __attribute__((constructor))
 static void
 redwood_springboard_init(void)
@@ -1083,6 +1089,21 @@ redwood_springboard_init(void)
 	if (name == NULL) {
 		return;
 	}
+
+	/*
+	 * Allow @3x wallpaper bundles to be loaded across all wallpaper and poster processes.
+	 */
+	Class ud_cls = objc_getClass("NSUserDefaults");
+	if (ud_cls) {
+		SEL sel = sel_registerName("wk_ignoreLogicalScreenClassForWallpaperBundle");
+		Method m = class_getInstanceMethod(ud_cls, sel);
+		if (m) {
+			method_setImplementation(m, (IMP)return_yes);
+		} else {
+			class_addMethod(ud_cls, sel, (IMP)return_yes, "B@:");
+		}
+	}
+
 	if (strcmp(name, "SpringBoard") != 0) {
 		static char who[64];
 

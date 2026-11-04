@@ -1064,9 +1064,9 @@ typedef struct {
 } CAFrameRateRange_t;
 
 static id (*original_display_link_with_target)(Class cls, SEL _cmd, id target, SEL sel);
-static void (*original_set_preferred_fps)(id self, SEL _cmd, NSInteger fps);
+static void (*original_set_preferred_fps)(id self, SEL _cmd, long fps);
 static void (*original_set_preferred_range)(id self, SEL _cmd, CAFrameRateRange_t range);
-static void (*original_set_frame_interval)(id self, SEL _cmd, NSInteger interval);
+static void (*original_set_frame_interval)(id self, SEL _cmd, long interval);
 
 static id
 display_link_with_target(Class cls, SEL _cmd, id target, SEL sel)
@@ -1085,11 +1085,11 @@ display_link_with_target(Class cls, SEL _cmd, id target, SEL sel)
 }
 
 static void
-display_link_set_preferred_fps(id self, SEL _cmd, NSInteger fps)
+display_link_set_preferred_fps(id self, SEL _cmd, long fps)
 {
 	if (objc_getAssociatedObject(self, &kInProcessAnimKey) != nil) {
 		if (dl_touch_lat) {
-			say("dl: link %p UIViewInProcessAnimationManager requested %ld fps; dropped\n", self, (long)fps);
+			say("dl: link %p UIViewInProcessAnimationManager requested %ld fps; dropped\n", self, fps);
 		}
 		fps = 0;
 	}
@@ -1112,11 +1112,11 @@ display_link_set_preferred_range(id self, SEL _cmd, CAFrameRateRange_t range)
 }
 
 static void
-display_link_set_frame_interval(id self, SEL _cmd, NSInteger interval)
+display_link_set_frame_interval(id self, SEL _cmd, long interval)
 {
 	if (objc_getAssociatedObject(self, &kInProcessAnimKey) != nil) {
 		if (dl_touch_lat) {
-			say("dl: link %p UIViewInProcessAnimationManager requested interval %ld; dropped\n", self, (long)interval);
+			say("dl: link %p UIViewInProcessAnimationManager requested interval %ld; dropped\n", self, interval);
 		}
 		interval = 1;
 	}
@@ -1141,12 +1141,12 @@ display_link_max(const char *arguments)
 	}
 	m_create = class_getClassMethod(cls, sel_registerName("displayLinkWithTarget:selector:"));
 	if (m_create) {
-		original_display_link_with_target = (id (*)(Class, SEL, id, id))method_getImplementation(m_create);
+		original_display_link_with_target = (id (*)(Class, SEL, id, SEL))method_getImplementation(m_create);
 		method_setImplementation(m_create, (IMP)display_link_with_target);
 	}
 	m_fps = class_getInstanceMethod(cls, sel_registerName("setPreferredFramesPerSecond:"));
 	if (m_fps) {
-		original_set_preferred_fps = (void (*)(id, SEL, NSInteger))method_getImplementation(m_fps);
+		original_set_preferred_fps = (void (*)(id, SEL, long))method_getImplementation(m_fps);
 		method_setImplementation(m_fps, (IMP)display_link_set_preferred_fps);
 	}
 	m_range = class_getInstanceMethod(cls, sel_registerName("setPreferredFrameRateRange:"));
@@ -1156,7 +1156,7 @@ display_link_max(const char *arguments)
 	}
 	m_interval = class_getInstanceMethod(cls, sel_registerName("setFrameInterval:"));
 	if (m_interval) {
-		original_set_frame_interval = (void (*)(id, SEL, NSInteger))method_getImplementation(m_interval);
+		original_set_frame_interval = (void (*)(id, SEL, long))method_getImplementation(m_interval);
 		method_setImplementation(m_interval, (IMP)display_link_set_frame_interval);
 	}
 	say("redwood: dl_max: hooked CADisplayLink rate requests for UIViewInProcessAnimationManager\n");

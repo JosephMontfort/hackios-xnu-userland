@@ -1051,6 +1051,118 @@ control_center_fades(const char *arguments)
 }
 
 /*
+ * dl_max: Prevent UIKit's UIViewInProcessAnimationManager from capping display link frame rates
+ * to 20..30 Hz on page swipes and bouncing animations (upstream 7caa457).
+ */
+static const char kInProcessAnimKey = 0;
+static bool dl_touch_lat = false;
+
+typedef struct {
+	float minimum;
+	float maximum;
+	float preferred;
+} CAFrameRateRange_t;
+
+static id (*original_display_link_with_target)(Class cls, SEL _cmd, id target, SEL sel);
+static void (*original_set_preferred_fps)(id self, SEL _cmd, NSInteger fps);
+static void (*original_set_preferred_range)(id self, SEL _cmd, CAFrameRateRange_t range);
+static void (*original_set_frame_interval)(id self, SEL _cmd, NSInteger interval);
+
+static id
+display_link_with_target(Class cls, SEL _cmd, id target, SEL sel)
+{
+	id link = original_display_link_with_target(cls, _cmd, target, sel);
+	if (link != nil && target != nil) {
+		const char *cname = object_getClassName(target);
+		if (strstr(cname, "InProcessAnimation") != NULL) {
+			objc_setAssociatedObject(link, &kInProcessAnimKey, (id)kCFBooleanTrue, OBJC_ASSOCIATION_ASSIGN);
+			if (dl_touch_lat) {
+				say("dl: marked display link %p for %s (sel %s)\n", link, cname, sel ? sel_getName(sel) : "");
+			}
+		}
+	}
+	return link;
+}
+
+static void
+display_link_set_preferred_fps(id self, SEL _cmd, NSInteger fps)
+{
+	if (objc_getAssociatedObject(self, &kInProcessAnimKey) != nil) {
+		if (dl_touch_lat) {
+			say("dl: link %p UIViewInProcessAnimationManager requested %ld fps; dropped\n", self, (long)fps);
+		}
+		fps = 0;
+	}
+	original_set_preferred_fps(self, _cmd, fps);
+}
+
+static void
+display_link_set_preferred_range(id self, SEL _cmd, CAFrameRateRange_t range)
+{
+	if (objc_getAssociatedObject(self, &kInProcessAnimKey) != nil) {
+		if (dl_touch_lat) {
+			say("dl: link %p UIViewInProcessAnimationManager requested range %.1f-%.1f (pref %.1f); dropped\n",
+			    self, range.minimum, range.maximum, range.preferred);
+		}
+		range.minimum = 0;
+		range.maximum = 0;
+		range.preferred = 0;
+	}
+	original_set_preferred_range(self, _cmd, range);
+}
+
+static void
+display_link_set_frame_interval(id self, SEL _cmd, NSInteger interval)
+{
+	if (objc_getAssociatedObject(self, &kInProcessAnimKey) != nil) {
+		if (dl_touch_lat) {
+			say("dl: link %p UIViewInProcessAnimationManager requested interval %ld; dropped\n", self, (long)interval);
+		}
+		interval = 1;
+	}
+	original_set_frame_interval(self, _cmd, interval);
+}
+
+static void
+display_link_max(const char *arguments)
+{
+	Class cls = objc_getClass("CADisplayLink");
+	Method m_create, m_fps, m_range, m_interval;
+
+	if (arguments && strstr(arguments, "dl_max=0") != NULL) {
+		say("redwood: dl_max=0: UIViewInProcessAnimationManager rate throttling left untouched\n");
+		return;
+	}
+	if (arguments && strstr(arguments, "touch_lat=1") != NULL) {
+		dl_touch_lat = true;
+	}
+	if (cls == NULL) {
+		return;
+	}
+	m_create = class_getClassMethod(cls, sel_registerName("displayLinkWithTarget:selector:"));
+	if (m_create) {
+		original_display_link_with_target = (id (*)(Class, SEL, id, id))method_getImplementation(m_create);
+		method_setImplementation(m_create, (IMP)display_link_with_target);
+	}
+	m_fps = class_getInstanceMethod(cls, sel_registerName("setPreferredFramesPerSecond:"));
+	if (m_fps) {
+		original_set_preferred_fps = (void (*)(id, SEL, NSInteger))method_getImplementation(m_fps);
+		method_setImplementation(m_fps, (IMP)display_link_set_preferred_fps);
+	}
+	m_range = class_getInstanceMethod(cls, sel_registerName("setPreferredFrameRateRange:"));
+	if (m_range) {
+		original_set_preferred_range = (void (*)(id, SEL, CAFrameRateRange_t))method_getImplementation(m_range);
+		method_setImplementation(m_range, (IMP)display_link_set_preferred_range);
+	}
+	m_interval = class_getInstanceMethod(cls, sel_registerName("setFrameInterval:"));
+	if (m_interval) {
+		original_set_frame_interval = (void (*)(id, SEL, NSInteger))method_getImplementation(m_interval);
+		method_setImplementation(m_interval, (IMP)display_link_set_frame_interval);
+	}
+	say("redwood: dl_max: hooked CADisplayLink rate requests for UIViewInProcessAnimationManager\n");
+}
+
+/*
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
@@ -1204,9 +1316,11 @@ redwood_springboard_init(void)
 		size_t size = sizeof(args) - 1;
 		const char *delay;
 
-		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (delay = strstr(args, "sb_delay=")) != NULL &&
-		    (delay == args || delay[-1] == ' ')) {
-			usleep((useconds_t)(atof(delay + 9) * 1e6));
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+			display_link_max(args);
+			if ((delay = strstr(args, "sb_delay=")) != NULL && (delay == args || delay[-1] == ' ')) {
+				usleep((useconds_t)(atof(delay + 9) * 1e6));
+			}
 		}
 	}
 	/*

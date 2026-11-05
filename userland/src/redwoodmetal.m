@@ -1136,6 +1136,64 @@ struct gem_close { uint32_t handle, pad; };
 
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
+	/* Process gating: only give the Metal device to allowed processes.
+	 * Processes like SpringBoard or mediaserverd fall back to CPU/software rendering
+	 * when no Metal device is present, avoiding MPS crashes and missing shader issues.
+	 * metal_all=1: allow all processes
+	 * metal_sb=1: allow SpringBoard
+	 * metal_procs=p1,p2: comma-separated list of allowed process names
+	 * Default: allow backboardd, RedwoodTriangle, metal_drv_test, metal_caps, metal_props
+	 */
+	const char *pname = getprogname();
+	char bootargs[1024] = "";
+	size_t bootargs_size = sizeof(bootargs) - 1;
+	BOOL allow = NO;
+
+	if (sysctlbyname("kern.bootargs", bootargs, &bootargs_size, NULL, 0) == 0) {
+		if (strstr(bootargs, "metal_all=1") != NULL) {
+			allow = YES;
+		} else if (pname != NULL && strcmp(pname, "SpringBoard") == 0 && strstr(bootargs, "metal_sb=1") != NULL) {
+			allow = YES;
+		} else {
+			const char *procs = strstr(bootargs, "metal_procs=");
+			if (procs != NULL) {
+				char proc_list[256] = "";
+				procs += strlen("metal_procs=");
+				size_t len = strcspn(procs, " \t\r\n");
+				if (len >= sizeof(proc_list)) len = sizeof(proc_list) - 1;
+				strncpy(proc_list, procs, len);
+				proc_list[len] = '\0';
+
+				if (pname != NULL) {
+					char *token = strtok(proc_list, ",");
+					while (token != NULL) {
+						if (strcmp(token, pname) == 0) {
+							allow = YES;
+							break;
+						}
+						token = strtok(NULL, ",");
+					}
+				}
+			}
+		}
+	}
+
+	if (!allow && pname != NULL) {
+		if (strcmp(pname, "backboardd") == 0 ||
+		    strcmp(pname, "RedwoodTriangle") == 0 ||
+		    strcmp(pname, "metal_drv_test") == 0 ||
+		    strcmp(pname, "metal_caps") == 0 ||
+		    strcmp(pname, "metal_props") == 0) {
+			allow = YES;
+		}
+	}
+
+	if (!allow) {
+		rw_print("%s is not shown the Metal device (CPU fallback; metal_all=1 or metal_procs= to enable)\n",
+		         pname ? pname : "unknown");
+		return nil;
+	}
+
 	ensure_spi([self class]);
 
 	self = [super init];
@@ -1250,7 +1308,7 @@ struct gem_close { uint32_t handle, pad; };
 		size_t size = sizeof(args) - 1;
 		const char *at;
 
-		profile = 0;
+		profile = 1;
 		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 &&
 		    (at = strstr(args, "metal_profile=")) != NULL && (at == args || at[-1] == ' ')) {
 			profile = (NSUInteger)strtoul(at + strlen("metal_profile="), NULL, 10);

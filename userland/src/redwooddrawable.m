@@ -380,8 +380,11 @@ struct rwd_format {
 };
 
 static const struct rwd_format rwd_formats[] = {
+	{   1, 'A008', 1, 0, "MTLPixelFormatA8Unorm" },
 	{  10, 'A008', 1, 0, "MTLPixelFormatR8Unorm" },
 	{  11, 'A008', 1, 0, "MTLPixelFormatR8Unorm_sRGB" },
+	{  30, '2C08', 2, 0, "MTLPixelFormatRG8Unorm" },
+	{  31, '2C08', 2, 0, "MTLPixelFormatRG8Unorm_sRGB" },
 	{  70, 'RGBA', 4, 0, "MTLPixelFormatRGBA8Unorm" },
 	{  71, 'RGBA', 4, 0, "MTLPixelFormatRGBA8Unorm_sRGB" },
 	{  80, 'BGRA', 4, 0, "MTLPixelFormatBGRA8Unorm" },
@@ -389,12 +392,12 @@ static const struct rwd_format rwd_formats[] = {
 	{  90, 'R10k', 4, 0, "a ten-bit RGB format" },
 	{  94, 'l10r', 4, 1, "a ten-bit RGB format" },
 	{ 115, 'RGhA', 8, 0, "MTLPixelFormatRGBA16Float" },
-	{ 550, 'b3a8', 4, 1, "a ten-bit XR format" },
-	{ 551, 'b3a8', 4, 1, "a ten-bit XR format" },
-	{ 552, 'w40a', 4, 1, "a ten-bit XR format" },
-	{ 553, 'w40a', 4, 1, "a ten-bit XR format" },
-	{ 554, 'w30r', 4, 1, "a ten-bit XR format" },
-	{ 555, 'w30r', 4, 1, "a ten-bit XR format" },
+	{ 550, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
+	{ 551, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
+	{ 552, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
+	{ 553, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
+	{ 554, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
+	{ 555, 'BGRA', 4, 0, "a ten-bit XR format (aliased to BGRA)" },
 };
 
 int

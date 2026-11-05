@@ -95,7 +95,11 @@ main_loop_turn(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activit
 	} else if (activity == kCFRunLoopBeforeWaiting && info == NULL) {
 		commit_began = now_us();
 	} else if (activity == kCFRunLoopBeforeWaiting && main_woke != 0) {
-		say("tl: a %llu %llu %llu\n", main_woke, commit_began, now_us());
+		uint64_t now = now_us();
+		if ((now > main_woke && (now - main_woke) >= 1000) ||
+		    (commit_began > main_woke && now > commit_began && (now - commit_began) >= 1000)) {
+			say("tl: a %llu %llu %llu\n", main_woke, commit_began, now);
+		}
 		main_woke = 0;
 	}
 }

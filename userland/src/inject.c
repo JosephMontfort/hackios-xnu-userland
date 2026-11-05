@@ -1203,6 +1203,93 @@ opengl_es(void)
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "redwood_gl_function_refused");
 }
 
+/*
+ * What CoreAnimation's Metal renderer looks for when it starts (CA::OGL::MetalContext asserts metallib_url != nil:
+ * on iOS 16.5 QuartzCore.framework may only have default.pipelinelib).
+ * Every NSBundle lookup of a "metallib" or "pipelinelib" resource in the window server is logged;
+ * boot-arg ca_metallib=PATH (or /redwood/share/QuartzCore-default.metallib) answers a lookup of
+ * default.metallib that found nothing.
+ */
+static id (*orig_url_for)(id self, SEL selector, id name, id extension);
+static id (*orig_url_for_in)(id self, SEL selector, id name, id extension, id subdirectory);
+static const char *ca_metallib;
+static unsigned lookups_said;
+
+static const char *
+bundle_utf8(id string)
+{
+	return string != NULL ? ((const char *(*)(id, SEL))objc_msgSend)(string, sel_registerName("UTF8String")) : "(nil)";
+}
+
+static id
+metallib_answer(id self, id name, id extension, id found)
+{
+	const char *ext = extension != NULL ? bundle_utf8(extension) : "";
+
+	if (strstr(ext, "metallib") == NULL && strstr(ext, "pipelinelib") == NULL) {
+		return found;
+	}
+	if (lookups_said++ < 40) {
+		id path = found != NULL ? ((id (*)(id, SEL))objc_msgSend)(found, sel_registerName("path")) : NULL;
+
+		say("redwood: %s asks bundle %s for %s.%s: %s\n", getprogname(),
+		    bundle_utf8(((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("bundlePath"))), bundle_utf8(name), ext,
+		    found != NULL ? bundle_utf8(path) : "nothing");
+	}
+	if (found == NULL && ca_metallib != NULL && name != NULL && strcmp(bundle_utf8(name), "default") == 0 &&
+	    strcmp(ext, "metallib") == 0) {
+		id text = ((id (*)(Class, SEL, const char *))objc_msgSend)(objc_getClass("NSString"),
+		    sel_registerName("stringWithUTF8String:"), ca_metallib);
+
+		return ((id (*)(Class, SEL, id))objc_msgSend)(objc_getClass("NSURL"), sel_registerName("fileURLWithPath:"), text);
+	}
+	return found;
+}
+
+static id
+my_url_for(id self, SEL selector, id name, id extension)
+{
+	return metallib_answer(self, name, extension, orig_url_for(self, selector, name, extension));
+}
+
+static id
+my_url_for_in(id self, SEL selector, id name, id extension, id subdirectory)
+{
+	return metallib_answer(self, name, extension, orig_url_for_in(self, selector, name, extension, subdirectory));
+}
+
+static void
+watch_metallib_lookups(const char *arguments)
+{
+	static char path[256];
+	const char *at = strstr(arguments, "ca_metallib=");
+	Class bundle = objc_getClass("NSBundle");
+	Method two, three;
+
+	if (at != NULL) {
+		size_t length = strcspn(at + 12, " ");
+
+		if (length < sizeof(path)) {
+			memcpy(path, at + 12, length);
+			path[length] = '\0';
+			ca_metallib = path;
+		}
+	} else if (access("/redwood/share/QuartzCore-default.metallib", F_OK) == 0) {
+		ca_metallib = "/redwood/share/QuartzCore-default.metallib";
+	}
+	if (bundle == NULL) {
+		return;
+	}
+	if ((two = class_getInstanceMethod(bundle, sel_registerName("URLForResource:withExtension:"))) != NULL) {
+		orig_url_for = (id (*)(id, SEL, id, id))method_setImplementation(two, (IMP)my_url_for);
+	}
+	if ((three = class_getInstanceMethod(bundle, sel_registerName("URLForResource:withExtension:subdirectory:"))) != NULL) {
+		orig_url_for_in = (id (*)(id, SEL, id, id, id))method_setImplementation(three, (IMP)my_url_for_in);
+	}
+	say("redwood: metallib lookups in %s are intercepted%s%s\n", getprogname(), ca_metallib ? "; default.metallib is " : "",
+	    ca_metallib ? ca_metallib : "(none)");
+}
+
 __attribute__((constructor))
 static void
 redwood_init(void)
@@ -1218,6 +1305,13 @@ redwood_init(void)
 	if (strcmp(name, "backboardd") == 0) {
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
+
+		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+			if (strstr(arguments, "metal_watch=1") != NULL || strstr(arguments, "ca_metallib=") != NULL ||
+			    strstr(arguments, "camtl=1") != NULL || strstr(arguments, "metal=1") != NULL) {
+				watch_metallib_lookups(arguments);
+			}
+		}
 
 		/*
 		 * Boot-arg ca_vbl=1: CoreAnimation's frame clock from the display driver's refresh

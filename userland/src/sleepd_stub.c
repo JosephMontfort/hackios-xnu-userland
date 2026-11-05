@@ -5,11 +5,13 @@
  * Prevents SpringBoard and widget clients from pinning CPU cores in an
  * aggressive reconnection loop when the full sleep daemon is absent.
  */
-#include <servers/bootstrap.h>
 #include <mach/mach.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <dispatch/dispatch.h>
+
+extern mach_port_t bootstrap_port;
+extern kern_return_t bootstrap_check_in(mach_port_t bp, const char *service_name, mach_port_t *sp);
 
 static void
 register_service(const char *name)

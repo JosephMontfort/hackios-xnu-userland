@@ -609,8 +609,9 @@ window_server_keeps_opengl_es(void)
 	Method method;
 	IMP original;
 
-	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "camtl=1") != NULL) {
-		say("redwood: camtl=1: CoreAnimation may have the Metal device (it needs "
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
+	    (strstr(arguments, "camtl=1") != NULL || strstr(arguments, "metal=1") != NULL)) {
+		say("redwood: metal=1/camtl=1: CoreAnimation may have the Metal device (it needs "
 		    "QuartzCore.framework/default.metallib in the image)\n");
 		return;
 	}

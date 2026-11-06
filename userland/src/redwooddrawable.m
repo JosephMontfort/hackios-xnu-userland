@@ -594,12 +594,21 @@ rwd_texture_for_surface(struct rwa_device *mesa_device, void *iosurface, unsigne
 		return NULL;
 	}
 	if (surface.pixelFormat != fourcc) {
-		rwd_say(why, why_size, "surface %u is '%c%c%c%c' and Metal format %u is "
-		    "'%c%c%c%c'", id, (char)(surface.pixelFormat >> 24),
-		    (char)(surface.pixelFormat >> 16), (char)(surface.pixelFormat >> 8),
-		    (char)surface.pixelFormat, want->pixel_format, (char)(fourcc >> 24),
-		    (char)(fourcc >> 16), (char)(fourcc >> 8), (char)fourcc);
-		return NULL;
+		BOOL match = NO;
+		if (bytes_per_pixel == 1 && (surface.pixelFormat == 'A008' || surface.pixelFormat == 'L008')) match = YES;
+		if (bytes_per_pixel == 2 && (surface.pixelFormat == '2C08' || surface.pixelFormat == '2c08')) match = YES;
+		if (bytes_per_pixel == 4 && (fourcc == 'BGRA' || fourcc == 'RGBA') &&
+		    (surface.pixelFormat == 'BGRA' || surface.pixelFormat == 'RGBA' || surface.pixelFormat == 'ARGB' ||
+		     surface.pixelFormat == 'b3a8' || surface.pixelFormat == 'w40a' || surface.pixelFormat == 'w30r')) match = YES;
+		if (want->pixel_format >= 550 && want->pixel_format <= 555) match = YES;
+		if (!match) {
+			rwd_say(why, why_size, "surface %u is '%c%c%c%c' and Metal format %u is "
+			    "'%c%c%c%c'", id, (char)(surface.pixelFormat >> 24),
+			    (char)(surface.pixelFormat >> 16), (char)(surface.pixelFormat >> 8),
+			    (char)surface.pixelFormat, want->pixel_format, (char)(fourcc >> 24),
+			    (char)(fourcc >> 16), (char)(fourcc >> 8), (char)fourcc);
+			return NULL;
+		}
 	}
 	if (rwd_surface_fits_adreno(&surface, bytes_per_pixel, why, why_size) != 0) {
 		return NULL;

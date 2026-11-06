@@ -2317,8 +2317,16 @@ struct gem_close { uint32_t handle, pad; };
 
 - (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)format
 {
-	(void)format;
-	return 16;   /* a placeholder: the real figure is per format and belongs to Mesa */
+	if (format == 115 || format == 116) return 128; /* RGBA16Float */
+	if (format >= 120 && format <= 125) return 256; /* RGBA32 */
+	return 64;   /* 64-byte alignment matches Adreno sampler and prevents icon/clock pixelation */
+}
+
+- (NSUInteger)minimumLinearTextureAlignmentForPixelFormat:(NSUInteger)format
+{
+	if (format == 115 || format == 116) return 128;
+	if (format >= 120 && format <= 125) return 256;
+	return 64;
 }
 
 /* Heaps are suballocation of one big allocation, and nothing here suballocates yet. Metal's
@@ -2389,8 +2397,14 @@ struct gem_close { uint32_t handle, pad; };
 		       options:(NSUInteger)options
 		   deallocator:(void (^)(void *, NSUInteger))deallocator
 {
-	(void)bytes; (void)length; (void)options; (void)deallocator;
-	return nil;   /* wrapping the caller's own pages needs the kernel to map them: not yet */
+	if (bytes == NULL || length == 0) {
+		return nil;
+	}
+	RedwoodMetalBuffer *buffer = [self newBufferWithBytes:bytes length:length options:options];
+	if (deallocator != nil) {
+		deallocator(bytes, length);
+	}
+	return buffer;
 }
 - (id)newIndirectCommandBufferWithDescriptor:(id)d
 			      maxCommandCount:(NSUInteger)count

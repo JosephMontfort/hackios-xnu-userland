@@ -428,11 +428,95 @@ gpu_draws(void)
 static void
 plain_vibrancy(void)
 {
-	if (gpu_draws()) {
+	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+	say("redwood: SpringBoard: vibrant views are plain (BSUIVibrancyEffectViewDisabled=1, lock screen clock is white)\n");
+}
+
+static void
+noop_void(id self, SEL selector)
+{
+	(void)self;
+	(void)selector;
+}
+
+static id
+noop_nil(id self, SEL selector)
+{
+	(void)self;
+	(void)selector;
+	return nil;
+}
+
+static IMP
+hook_method(char kind, const char *class_name, const char *selector, IMP replacement)
+{
+	Class cls = objc_getClass(class_name);
+	if (!cls) {
+		return NULL;
+	}
+	SEL sel = sel_registerName(selector);
+	Method method = (kind == '+') ? class_getClassMethod(cls, sel) : class_getInstanceMethod(cls, sel);
+	if (!method) {
+		return NULL;
+	}
+	IMP original = method_setImplementation(method, replacement);
+	say("redwood: hooked %c[%s %s]\n", kind, class_name, selector);
+	return original;
+}
+
+static bool sleep_hooked = false;
+
+static void
+neutralize_sleep_spin(void)
+{
+	if (sleep_hooked) {
 		return;
 	}
-	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	say("redwood: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+	Class cls = objc_getClass("HKSPXPCConnectionProvider");
+	if (!cls) {
+		return;
+	}
+	hook_method('-', "HKSPXPCConnectionProvider", "connection", (IMP)noop_nil);
+	hook_method('-', "HKSPXPCConnectionProvider", "invalidate", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "connectionInvalidated", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "connectionInterrupted", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "sendMessage:errorHandler:", (IMP)noop_void);
+	sleep_hooked = true;
+	say("redwood: HKSPXPCConnectionProvider neutralized (infinite sleepd retry storm halted)\n");
+}
+
+static void
+ui_lite(void)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+	bool enabled = false;
+
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+		const char *arg = strstr(args, "ui_lite=");
+		if (arg != NULL && (arg == args || arg[-1] == ' ') && arg[8] != '0') {
+			enabled = true;
+		}
+	}
+
+	if (enabled) {
+		CFPreferencesSetAppValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"));
+		CFPreferencesSetAppValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"));
+		CFPreferencesSetValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"),
+		    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+		CFPreferencesSetValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"),
+		    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+		CFPreferencesSetAppValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+		CFPreferencesSetAppValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+		CFPreferencesAppSynchronize(CFSTR("com.apple.Accessibility"));
+		CFPreferencesSynchronize(CFSTR("com.apple.Accessibility"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+		CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+		CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+		    CFSTR("com.apple.Accessibility.EnhancedBackgroundContrastChanged"), NULL, NULL, TRUE);
+		CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+		    CFSTR("com.apple.Accessibility.ReduceMotionChanged"), NULL, NULL, TRUE);
+		say("redwood: SpringBoard: ui_lite enabled (EnhancedBackgroundContrast=1, ReduceMotion=1)\n");
+	}
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -679,6 +763,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 {
 	static bool told;
 
+	neutralize_sleep_spin();
 	if (original_prewarm_orb_view_shaders != NULL || objc_getClass("SiriPresentationViewController") == NULL) {
 		return;
 	}
@@ -1275,6 +1360,8 @@ redwood_springboard_init(void)
 	snapshot_format = replace_method_of_kind('+', "XBApplicationSnapshotManifestImpl", "_outputFormatForSnapshot:",
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
+	ui_lite();
+	neutralize_sleep_spin();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",

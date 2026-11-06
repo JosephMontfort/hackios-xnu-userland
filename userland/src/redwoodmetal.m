@@ -1067,6 +1067,10 @@ struct gem_close { uint32_t handle, pad; };
 	struct rwa_texture *_texture;
 	struct rwa_texture_shape _shape;
 	int _responsibleProcess;   /* as on the buffer: accounting, not behaviour */
+	RedwoodMetalTexture *_parent;
+	BOOL _isView;
+	NSUInteger _parentRelativeLevel;
+	NSUInteger _parentRelativeSlice;
 }
 @property (readonly) struct rwa_texture *mesaTexture;
 /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
@@ -2873,9 +2877,10 @@ struct gem_close { uint32_t handle, pad; };
 
 - (void)dealloc
 {
-	if (_texture != NULL) {
+	if (_texture != NULL && !_isView) {
 		mesa.texture_destroy(_texture);
 	}
+	[_parent release];
 	[super dealloc];
 }
 
@@ -2893,9 +2898,9 @@ struct gem_close { uint32_t handle, pad; };
 - (NSUInteger)usage                { return _shape.usage; }
 - (BOOL)isFramebufferOnly          { return NO; }
 - (BOOL)allowGPUOptimizedContents  { return NO; }
-- (id)parentTexture                { return nil; }
-- (NSUInteger)parentRelativeLevel  { return 0; }
-- (NSUInteger)parentRelativeSlice  { return 0; }
+- (id)parentTexture                { return _parent; }
+- (NSUInteger)parentRelativeLevel  { return _parentRelativeLevel; }
+- (NSUInteger)parentRelativeSlice  { return _parentRelativeSlice; }
 - (id)buffer                       { return nil; }
 - (NSUInteger)bufferOffset         { return 0; }
 - (NSUInteger)bufferBytesPerRow    { return 0; }
@@ -3007,29 +3012,40 @@ struct gem_close { uint32_t handle, pad; };
 	return YES;
 }
 
-/* A view of a texture is another texture over the same memory, and the compiler library has
- * no call for that yet; nil is the honest answer, and it is better than a view that aliases
- * nothing. */
-- (id)newTextureViewWithPixelFormat:(NSUInteger)format { (void)format; return nil; }
+- (id)newTextureViewWithPixelFormat:(NSUInteger)format
+{
+	return [self newTextureViewWithPixelFormat:format
+				       textureType:_shape.type
+					    levels:NSMakeRange(0, _shape.mip_levels ? _shape.mip_levels : 1)
+					    slices:NSMakeRange(0, _shape.array_length ? _shape.array_length : 1)];
+}
 
-/*
- * THE REST OF WHAT <MTLTexture>, <MTLTextureSPI>, <MTLResource> AND <MTLResourceSPI>
- * REQUIRE: 27 methods with no answer anywhere in this chain before this section. The same
- * three kinds as everywhere else -- served, true by construction, or refused out loud.
- *
- * The two view calls are the only ones here that hand nothing back, and they say so: a view
- * is a second texture over the first one's memory, and rwa has no call that makes one. A
- * view that aliased nothing would be found much later, by a picture that did not change.
- */
 - (id)newTextureViewWithPixelFormat:(NSUInteger)format
 			textureType:(NSUInteger)type
 			     levels:(NSRange)levels
 			     slices:(NSRange)slices
 {
-	(void)format; (void)type; (void)levels; (void)slices;
-	RW_ONCE("a texture view is not implemented (the compiler library has no "
-		"call that makes a second texture over the same memory); nil\n");
-	return nil;
+	RedwoodMetalTexture *view = [[RedwoodMetalTexture alloc] init];
+	if (view == nil) {
+		return nil;
+	}
+	view->_owner = _owner;
+	view->_texture = _texture;
+	view->_shape = _shape;
+	view->_shape.pixel_format = (unsigned)format;
+	if (type != 0) {
+		view->_shape.type = (unsigned)type;
+	}
+	view->_shape.mip_levels = (unsigned)(levels.length > 0 ? levels.length : 1);
+	view->_shape.array_length = (unsigned)(slices.length > 0 ? slices.length : 1);
+	view->_parent = [self retain];
+	view->_isView = YES;
+	view->_parentRelativeLevel = levels.location;
+	view->_parentRelativeSlice = slices.location;
+	rw_print("texture view: parent format %u -> view format %lu, type %lu, levels %lu+%lu\n",
+	         _shape.pixel_format, (unsigned long)format, (unsigned long)type,
+	         (unsigned long)levels.location, (unsigned long)levels.length);
+	return view;
 }
 - (id)newTextureViewWithPixelFormat:(NSUInteger)format
 			textureType:(NSUInteger)type

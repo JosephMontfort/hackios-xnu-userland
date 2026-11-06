@@ -1331,7 +1331,7 @@ redwood_init(void)
 		 */
 		for (const char *argument = arguments; (argument = strstr(argument, "caenv=")) != NULL; argument += 6) {
 			char setting[128];
-			size_t length = strcspn(argument + 6, " ");
+			size_t length = strcspn(argument + 6, " \t\r\n");
 			char *equals;
 
 			if ((argument != arguments && argument[-1] != ' ') || length == 0 || length >= sizeof(setting)) {
@@ -1345,6 +1345,9 @@ redwood_init(void)
 				say("redwood: caenv: %s=%s for the window server\n", setting, equals + 1);
 			}
 		}
+		/* Disable dirty regions so icons do not disappear after idling */
+		setenv("CA_DISABLE_DIRTY_REGIONS", "1", 1);
+		say("redwood: CA_DISABLE_DIRTY_REGIONS=1 enabled for backboardd\n");
 		extern int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
 		#define MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK 4
 		memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 1024, NULL, 0);

@@ -596,7 +596,7 @@ rwd_texture_for_surface(struct rwa_device *mesa_device, void *iosurface, unsigne
 	if (surface.pixelFormat != fourcc) {
 		BOOL match = NO;
 		if (bytes_per_pixel == 1 && (surface.pixelFormat == 'A008' || surface.pixelFormat == 'L008')) match = YES;
-		if (bytes_per_pixel == 2 && (surface.pixelFormat == '2C08' || surface.pixelFormat == '2c08')) match = YES;
+		if (bytes_per_pixel == 2 && (surface.pixelFormat == '2C08' || surface.pixelFormat == '2c08' || surface.pixelFormat == 'LA08')) match = YES;
 		if (bytes_per_pixel == 4 && (fourcc == 'BGRA' || fourcc == 'RGBA') &&
 		    (surface.pixelFormat == 'BGRA' || surface.pixelFormat == 'RGBA' || surface.pixelFormat == 'ARGB' ||
 		     surface.pixelFormat == 'b3a8' || surface.pixelFormat == 'w40a' || surface.pixelFormat == 'w30r')) match = YES;
@@ -637,7 +637,16 @@ rwd_texture_for_surface(struct rwa_device *mesa_device, void *iosurface, unsigne
 	 * per user client -- and then there would be two owners of one surface and only one
 	 * release.
 	 */
-	texture = import(mesa_device, want, (int)id, surface.offset, surface.rowBytes, why,
+	struct rwd_texture_shape shape = *want;
+	if (shape.sample_count > 1) {
+		shape.sample_count = 1;
+		if (shape.type == 4 /* MTLTextureType2DMultisample */) {
+			shape.type = 2; /* MTLTextureType2D */
+		} else if (shape.type == 8 /* MTLTextureType2DMultisampleArray */) {
+			shape.type = 3; /* MTLTextureType2DArray */
+		}
+	}
+	texture = import(mesa_device, &shape, (int)id, surface.offset, surface.rowBytes, why,
 	    why_size);
 	if (texture == NULL) {
 		return NULL;    /* the library wrote the sentence; it names the GPU's own reason */

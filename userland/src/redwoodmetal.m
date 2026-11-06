@@ -95,6 +95,7 @@
 #import <objc/runtime.h>
 #include <IOKit/IOKitLib.h>
 #include <dlfcn.h>
+#include <Block.h>
 
 #include "redwood_drawable.h"
 #include <stdarg.h>
@@ -1112,6 +1113,7 @@ struct gem_close { uint32_t handle, pad; };
 @end
 
 @interface RedwoodMetalBuffer : _MTLResource {
+@public
 	RedwoodMetalDevice *_owner;
 	io_connect_t _gpu;        /* not owned: the device holds it */
 	uint32_t _handle;         /* set on the kernel path only */
@@ -1120,6 +1122,8 @@ struct gem_close { uint32_t handle, pad; };
 	NSUInteger _length;
 	struct rwa_buffer *_mesa; /* set instead when the memory came from Mesa */
 	int _responsibleProcess;  /* what <MTLResourceSPI> calls the owner, for accounting */
+	void (^_deallocator)(void *, NSUInteger);
+	void *_originalBytes;
 }
 @property (readonly) struct rwa_buffer *mesaBuffer;
 - (instancetype)initWithDevice:(RedwoodMetalDevice *)device
@@ -1150,7 +1154,7 @@ struct gem_close { uint32_t handle, pad; };
 	BOOL allow = NO;
 
 	if (sysctlbyname("kern.bootargs", bootargs, &bootargs_size, NULL, 0) == 0) {
-		if (strstr(bootargs, "metal_all=1") != NULL) {
+		if (strstr(bootargs, "metal_all=1") != NULL || strstr(bootargs, "metal-all=1") != NULL) {
 			allow = YES;
 		} else if (pname != NULL && strcmp(pname, "SpringBoard") == 0 && strstr(bootargs, "metal_sb=1") != NULL) {
 			allow = YES;
@@ -1384,6 +1388,9 @@ struct gem_close { uint32_t handle, pad; };
 	}
 
 	struct rwa_render_shape shape = { .sample_count = (unsigned)[descriptor sampleCount] };
+	if (shape.sample_count > 1) {
+		shape.sample_count = 1;
+	}
 
 	/*
 	 * THE COLOUR ATTACHMENTS, each one's format AND ITS BLEND STATE.
@@ -1764,6 +1771,14 @@ struct gem_close { uint32_t handle, pad; };
 		.sample_count = (unsigned)[descriptor sampleCount],
 		.usage = (unsigned)[descriptor usage],
 	};
+	if (shape.sample_count > 1) {
+		shape.sample_count = 1;
+		if (shape.type == 4 /* MTLTextureType2DMultisample */) {
+			shape.type = 2; /* MTLTextureType2D */
+		} else if (shape.type == 8 /* MTLTextureType2DMultisampleArray */) {
+			shape.type = 3; /* MTLTextureType2DArray */
+		}
+	}
 	struct rwa_texture *texture = mesa.texture_create(_mesa, &shape, why, sizeof(why));
 
 	if (texture == NULL) {
@@ -2380,6 +2395,14 @@ struct gem_close { uint32_t handle, pad; };
 	shape.array_length = (unsigned)[d arrayLength];
 	shape.mip_levels = (unsigned)[d mipmapLevelCount];
 	shape.sample_count = (unsigned)[d sampleCount];
+	if (shape.sample_count > 1) {
+		shape.sample_count = 1;
+		if (shape.type == 4 /* MTLTextureType2DMultisample */) {
+			shape.type = 2; /* MTLTextureType2D */
+		} else if (shape.type == 8 /* MTLTextureType2DMultisampleArray */) {
+			shape.type = 3; /* MTLTextureType2DArray */
+		}
+	}
 	shape.usage = (unsigned)[d usage];
 	texture = rwd_texture_for_surface(_mesa, s, p, (const struct rwd_texture_shape *)&shape,
 					  &took, why, sizeof(why));
@@ -2401,8 +2424,9 @@ struct gem_close { uint32_t handle, pad; };
 		return nil;
 	}
 	RedwoodMetalBuffer *buffer = [self newBufferWithBytes:bytes length:length options:options];
-	if (deallocator != nil) {
-		deallocator(bytes, length);
+	if (buffer != nil && deallocator != nil) {
+		buffer->_deallocator = Block_copy(deallocator);
+		buffer->_originalBytes = bytes;
 	}
 	return buffer;
 }
@@ -2685,6 +2709,11 @@ struct gem_close { uint32_t handle, pad; };
 
 - (void)dealloc
 {
+	if (_deallocator != nil) {
+		_deallocator(_originalBytes, _length);
+		Block_release(_deallocator);
+		_deallocator = nil;
+	}
 	if (_mesa != NULL) {
 		mesa.buffer_destroy(_mesa);
 		[super dealloc];

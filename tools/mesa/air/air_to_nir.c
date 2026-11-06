@@ -2495,11 +2495,20 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       nir_def *i = air_get_ssa(c, in->operands[2]);
       if (!v || !x || !i)
          return false;
-      if (!nir_src_is_const(nir_src_for_ssa(i)))
-         return air_error(c, "instruction: insertelement at a run-time index");
-      air_set(c, &in->base,
-              air_val_ssa(c, nir_vector_insert_imm(&c->b, v, x,
-                                                   nir_src_as_uint(nir_src_for_ssa(i)))));
+      if (nir_src_is_const(nir_src_for_ssa(i))) {
+         air_set(c, &in->base,
+                 air_val_ssa(c, nir_vector_insert_imm(&c->b, v, x,
+                                                      nir_src_as_uint(nir_src_for_ssa(i)))));
+         return true;
+      }
+      unsigned n = v->num_components;
+      if (n > NIR_MAX_VEC_COMPONENTS)
+         return air_error(c, "instruction: an insertelement of %u components", n);
+      nir_def *comps[NIR_MAX_VEC_COMPONENTS];
+      for (unsigned k = 0; k < n; k++) {
+         comps[k] = nir_bcsel(&c->b, nir_ieq_imm(&c->b, i, k), x, nir_channel(&c->b, v, k));
+      }
+      air_set(c, &in->base, air_val_ssa(c, nir_vec(&c->b, comps, n)));
       return true;
    }
    case AIR_OP_SHUFFLEVEC: {

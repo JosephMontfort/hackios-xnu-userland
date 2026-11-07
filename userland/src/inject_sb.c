@@ -501,21 +501,13 @@ ui_lite(void)
 
 	if (enabled) {
 		CFPreferencesSetAppValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"));
-		CFPreferencesSetAppValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"));
 		CFPreferencesSetValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"),
 		    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-		CFPreferencesSetValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, CFSTR("com.apple.Accessibility"),
-		    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 		CFPreferencesSetAppValue(CFSTR("EnhancedBackgroundContrastEnabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-		CFPreferencesSetAppValue(CFSTR("ReduceMotionEnabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
 		CFPreferencesAppSynchronize(CFSTR("com.apple.Accessibility"));
 		CFPreferencesSynchronize(CFSTR("com.apple.Accessibility"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 		CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
-		CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-		    CFSTR("com.apple.Accessibility.EnhancedBackgroundContrastChanged"), NULL, NULL, TRUE);
-		CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-		    CFSTR("com.apple.Accessibility.ReduceMotionChanged"), NULL, NULL, TRUE);
-		say("redwood: SpringBoard: ui_lite enabled (EnhancedBackgroundContrast=1, ReduceMotion=1)\n");
+		say("redwood: SpringBoard: ui_lite enabled (EnhancedBackgroundContrast=1)\n");
 	}
 }
 

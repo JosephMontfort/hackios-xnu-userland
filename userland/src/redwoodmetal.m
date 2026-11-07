@@ -969,6 +969,10 @@ struct gem_close { uint32_t handle, pad; };
 - (instancetype)initWithRedwoodCommandBuffer:(RedwoodMetalCommandBuffer *)commandBuffer;
 @end
 
+@interface RedwoodMetalBlitEncoder : _MTLCommandEncoder
+- (instancetype)initWithRedwoodCommandBuffer:(RedwoodMetalCommandBuffer *)commandBuffer;
+@end
+
 @interface RedwoodMetalRenderEncoder : _MTLCommandEncoder
 - (instancetype)initWithRedwoodCommandBuffer:(RedwoodMetalCommandBuffer *)commandBuffer
 				  descriptor:(id)descriptor;
@@ -3862,10 +3866,187 @@ enum {
 	return nil;   /* one encoder at a time here; a parallel pass needs the split */
 }
 
+@implementation RedwoodMetalBlitEncoder {
+	RedwoodMetalCommandBuffer *_commandBuffer;
+}
+
+- (instancetype)initWithRedwoodCommandBuffer:(RedwoodMetalCommandBuffer *)commandBuffer
+{
+	self = [super initWithCommandBuffer:commandBuffer];
+	if (self == nil) {
+		return nil;
+	}
+	_commandBuffer = commandBuffer;
+	return self;
+}
+
+- (void)endEncoding
+{
+	[super endEncoding];
+}
+
+- (void)copyFromBuffer:(id)sourceBuffer
+          sourceOffset:(NSUInteger)sourceOffset
+              toBuffer:(id)destinationBuffer
+     destinationOffset:(NSUInteger)destinationOffset
+                  size:(NSUInteger)size
+{
+	if (!sourceBuffer || !destinationBuffer || size == 0) return;
+	void *src = [sourceBuffer contents];
+	void *dst = [destinationBuffer contents];
+	if (src && dst) {
+		memcpy((char *)dst + destinationOffset, (const char *)src + sourceOffset, size);
+	}
+}
+
+- (void)fillBuffer:(id)buffer range:(NSRange)range value:(uint8_t)value
+{
+	if (!buffer || range.length == 0) return;
+	void *dst = [buffer contents];
+	if (dst) {
+		memset((char *)dst + range.location, value, range.length);
+	}
+}
+
+- (void)copyFromTexture:(id)sourceTexture toTexture:(id)destinationTexture
+{
+	if (!sourceTexture || !destinationTexture) return;
+	NSUInteger width = [sourceTexture width];
+	NSUInteger height = [sourceTexture height];
+	MTLOrigin origin = MTLOriginMake(0, 0, 0);
+	MTLSize size = MTLSizeMake(width, height, 1);
+	[self copyFromTexture:sourceTexture sourceSlice:0 sourceLevel:0 sourceOrigin:origin sourceSize:size
+	            toTexture:destinationTexture destinationSlice:0 destinationLevel:0 destinationOrigin:origin];
+}
+
+- (void)copyFromTexture:(id)sourceTexture
+            sourceSlice:(NSUInteger)sourceSlice
+            sourceLevel:(NSUInteger)sourceLevel
+           sourceOrigin:(MTLOrigin)sourceOrigin
+             sourceSize:(MTLSize)sourceSize
+              toTexture:(id)destinationTexture
+       destinationSlice:(NSUInteger)destinationSlice
+       destinationLevel:(NSUInteger)destinationLevel
+      destinationOrigin:(MTLOrigin)destinationOrigin
+{
+	if (!sourceTexture || !destinationTexture) return;
+	if (sourceSize.width == 0 || sourceSize.height == 0) return;
+
+	NSUInteger bpp = 4;
+	switch ([sourceTexture pixelFormat]) {
+		case 10: case 12: bpp = 1; break;
+		case 30: case 31: bpp = 2; break;
+		case 70: case 71: case 80: case 81: default: bpp = 4; break;
+	}
+
+	NSUInteger bytesPerRow = sourceSize.width * bpp;
+	NSUInteger bytesPerImage = bytesPerRow * sourceSize.height;
+	size_t bufSize = bytesPerImage * (sourceSize.depth > 0 ? sourceSize.depth : 1);
+	void *temp = malloc(bufSize);
+	if (!temp) return;
+
+	MTLRegion srcRegion = MTLRegionMake3D(sourceOrigin.x, sourceOrigin.y, sourceOrigin.z,
+	                                     sourceSize.width, sourceSize.height, sourceSize.depth > 0 ? sourceSize.depth : 1);
+	[sourceTexture getBytes:temp
+	            bytesPerRow:bytesPerRow
+	          bytesPerImage:bytesPerImage
+	             fromRegion:srcRegion
+	            mipmapLevel:sourceLevel
+	                  slice:sourceSlice];
+
+	MTLRegion dstRegion = MTLRegionMake3D(destinationOrigin.x, destinationOrigin.y, destinationOrigin.z,
+	                                     sourceSize.width, sourceSize.height, sourceSize.depth > 0 ? sourceSize.depth : 1);
+	[destinationTexture replaceRegion:dstRegion
+	                      mipmapLevel:destinationLevel
+	                            slice:destinationSlice
+	                        withBytes:temp
+	                      bytesPerRow:bytesPerRow
+	                    bytesPerImage:bytesPerImage];
+	free(temp);
+}
+
+- (void)copyFromBuffer:(id)sourceBuffer
+          sourceOffset:(NSUInteger)sourceOffset
+     sourceBytesPerRow:(NSUInteger)sourceBytesPerRow
+   sourceBytesPerImage:(NSUInteger)sourceBytesPerImage
+            sourceSize:(MTLSize)sourceSize
+             toTexture:(id)destinationTexture
+      destinationSlice:(NSUInteger)destinationSlice
+      destinationLevel:(NSUInteger)destinationLevel
+     destinationOrigin:(MTLOrigin)destinationOrigin
+{
+	if (!sourceBuffer || !destinationTexture) return;
+	void *src = [sourceBuffer contents];
+	if (!src) return;
+	MTLRegion dstRegion = MTLRegionMake3D(destinationOrigin.x, destinationOrigin.y, destinationOrigin.z,
+	                                     sourceSize.width, sourceSize.height, sourceSize.depth > 0 ? sourceSize.depth : 1);
+	[destinationTexture replaceRegion:dstRegion
+	                      mipmapLevel:destinationLevel
+	                            slice:destinationSlice
+	                        withBytes:(const char *)src + sourceOffset
+	                      bytesPerRow:sourceBytesPerRow
+	                    bytesPerImage:sourceBytesPerImage];
+}
+
+- (void)copyFromTexture:(id)sourceTexture
+            sourceSlice:(NSUInteger)sourceSlice
+            sourceLevel:(NSUInteger)sourceLevel
+           sourceOrigin:(MTLOrigin)sourceOrigin
+             sourceSize:(MTLSize)sourceSize
+               toBuffer:(id)destinationBuffer
+      destinationOffset:(NSUInteger)destinationOffset
+ destinationBytesPerRow:(NSUInteger)destinationBytesPerRow
+   destinationBytesPerImage:(NSUInteger)destinationBytesPerImage
+{
+	if (!sourceTexture || !destinationBuffer) return;
+	void *dst = [destinationBuffer contents];
+	if (!dst) return;
+	MTLRegion srcRegion = MTLRegionMake3D(sourceOrigin.x, sourceOrigin.y, sourceOrigin.z,
+	                                     sourceSize.width, sourceSize.height, sourceSize.depth > 0 ? sourceSize.depth : 1);
+	[sourceTexture getBytes:(char *)dst + destinationOffset
+	            bytesPerRow:destinationBytesPerRow
+	          bytesPerImage:destinationBytesPerImage
+	             fromRegion:srcRegion
+	            mipmapLevel:sourceLevel
+	                  slice:sourceSlice];
+}
+
+- (void)generateMipmapsForTexture:(id)texture { (void)texture; }
+- (void)optimizeContentsForGPUAccess:(id)texture { (void)texture; }
+- (void)optimizeContentsForCPUAccess:(id)texture { (void)texture; }
+- (void)resetCommandsInBuffer:(id)buffer withRange:(NSRange)range { (void)buffer; (void)range; }
+- (void)updateFence:(id)fence { (void)fence; }
+- (void)waitForFence:(id)fence { (void)fence; }
+
+- (id)forwardingTargetForSelector:(SEL)aSelector
+{
+	(void)aSelector;
+	return nil;
+}
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
+{
+	NSMethodSignature *sig = [super methodSignatureForSelector:aSelector];
+	if (!sig) {
+		sig = [NSMethodSignature signatureWithObjCTypes:"v@:"];
+	}
+	return sig;
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation
+{
+	(void)anInvocation;
+}
+
+@end
+
 /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
  * absent, for the reason the device's own 44 were answered: a missing selector aborts the
  * caller, and these are the four that were still missing. */
-- (id)blitCommandEncoder          { return nil; }
+- (id)blitCommandEncoder
+{
+	return [[[RedwoodMetalBlitEncoder alloc] initWithRedwoodCommandBuffer:self] autorelease];
+}
 - (id)resourceStateCommandEncoder { return nil; }
 - (id)accelerationStructureCommandEncoder { return nil; }
 - (void)encodeSignalEvent:(id)event value:(uint64_t)value { (void)event; (void)value; }

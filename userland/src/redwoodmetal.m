@@ -3729,143 +3729,6 @@ enum {
 	RW_CB_ERROR        = 5,
 };
 
-@implementation RedwoodMetalCommandBuffer {
-	RedwoodMetalCommandQueue *_queue;
-	NSMutableArray *_work;
-	NSError *_error;
-	NSUInteger _status;
-	BOOL _owesSlot;                 /* this buffer holds one of the queue's slots */
-	NSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */
-	NSUInteger _protectionOptions;  /* what the window server asked for; see -setProtectionOptions: */
-}
-
-/*
- * The window server sends this to every command buffer it makes, and until it was answered the
- * boot of 22 October 01:51 ended it 78 times with
- *
- *   NSInvalidArgumentException: -[RedwoodMetalCommandBuffer setProtectionOptions:]:
- *   unrecognized selector sent to instance
- *
- * -- an uncaught Objective-C exception out of CA::WindowServer::IOMFBServer::thread_body, which
- * is terminate() and not a refusal we could read.
- *
- * It was missed by owes.py for a reason worth keeping: that tool counts what the PROTOCOLS
- * require, and this pair is declared on a CLASS -- IOGPUMetalCommandBuffer, whose own
- * _protectionOptions ivar it is. Our command buffer descends from _MTLCommandBuffer and not
- * from IOGPU's, so nothing in the chain answers it and nothing in the protocol lists says it is
- * missing. Every selector Apple's own counterpart class declares is a selector a caller may
- * send, and the protocols are only part of that list.
- *
- * The value is kept and not honoured. Protected content means memory the GPU can read and the
- * processor cannot, which this port has nothing to provide: a buffer of ours is ordinary memory
- * on both sides. So a non-zero request says so once rather than being refused -- the window
- * server asks for it on buffers that carry no protected content at all, and refusing would stop
- * a composite that is in no danger.
- */
-- (void)setProtectionOptions:(NSUInteger)options
-{
-	if (options != 0 && _protectionOptions != options) {
-		RW_ONCE("a command buffer was asked for protection options %lu, and this "
-			"driver has no protected memory to give: the request is kept and not honoured, "
-			"because nothing it would protect is protected here either\n",
-			(unsigned long)options);
-	}
-	_protectionOptions = options;
-}
-
-- (NSUInteger)protectionOptions
-{
-	return _protectionOptions;
-}
-
-- (instancetype)initWithRedwoodQueue:(RedwoodMetalCommandQueue *)queue
-{
-	/* what IOGPUMetalCommandBuffer sends to super, retained references and no debug mode.
-	 * THIS CALL BLOCKS when the queue's semaphore is empty -- see the long note above
-	 * RedwoodMetalCommandQueue -- so by the time it returns, a slot is held and owed. */
-	self = [super initWithQueue:queue retainedReferences:YES synchronousDebugMode:NO];
-	if (self == nil) {
-		return nil;
-	}
-	_queue = [queue retain];
-	_work = [[NSMutableArray alloc] init];
-	/* The numbering this log is written in, said once per process and printed out of the
-	 * constants that answer -status: a log that does NOT carry this line was written before
-	 * the numbers became Metal's, and says committed 3, scheduled 4, completed 6 (see the
-	 * note above this class). */
-	RW_ONCE("MTLCommandBufferStatus: committed %u, scheduled %u, completed %u, "
-		"error %u -- Metal's own numbers; a log without this line was written by the old "
-		"ones (committed 3, scheduled 4, completed 6)\n",
-		(unsigned)RW_CB_COMMITTED, (unsigned)RW_CB_SCHEDULED,
-		(unsigned)RW_CB_COMPLETED, (unsigned)RW_CB_ERROR);
-	_status = RW_CB_ENQUEUED;   /* nothing is pending yet */
-	_owesSlot = YES;
-	[queue redwoodTookSlot];
-	return self;
-}
-
-/*
- * Give the queue's slot back, exactly once. Called at the end of -commit, where this
- * driver's work is already done, and at -dealloc for a buffer that was never committed --
- * which is the case Apple's _needsCommandBufferSemaphoreSignal exists for and the one that
- * would otherwise lose a slot for the life of the process.
- */
-- (void)redwoodReturnSlot
-{
-	dispatch_semaphore_t semaphore;
-
-	if (!_owesSlot) {
-		return;
-	}
-	_owesSlot = NO;
-	redwood_clear_semaphore_debt(self);
-	[_queue redwoodReturnedSlot];
-	semaphore = redwood_queue_semaphore(_queue);
-	if (semaphore != nil) {
-		dispatch_semaphore_signal(semaphore);
-	}
-}
-
-- (void)dealloc
-{
-	[self redwoodReturnSlot];
-	[_work release];
-	[_error release];
-	[_scheduled release];
-	[_completed release];
-	[_queue release];
-	[super dealloc];
-}
-
-- (id)device       { return [_queue device]; }
-- (id)commandQueue { return _queue; }
-- (NSUInteger)status { return _status; }
-- (NSError *)error { return _error; }
-- (BOOL)retainedReferences { return YES; }
-
-- (id)computeCommandEncoder
-{
-	return [[[RedwoodMetalComputeEncoder alloc] initWithRedwoodCommandBuffer:self]
-		   autorelease];
-}
-
-- (id)renderCommandEncoderWithDescriptor:(id)descriptor
-{
-	if (descriptor == nil) {
-		rw_print("a render pass needs a descriptor\n");
-		return nil;
-	}
-	return [[[RedwoodMetalRenderEncoder alloc] initWithRedwoodCommandBuffer:self
-								    descriptor:descriptor]
-		   autorelease];
-}
-
-- (id)parallelRenderCommandEncoderWithDescriptor:(id)descriptor
-{
-	(void)descriptor;
-	return nil;   /* one encoder at a time here; a parallel pass needs the split */
-}
-
 @implementation RedwoodMetalBlitEncoder {
 	RedwoodMetalCommandBuffer *_commandBuffer;
 }
@@ -4039,6 +3902,143 @@ enum {
 }
 
 @end
+
+@implementation RedwoodMetalCommandBuffer {
+	RedwoodMetalCommandQueue *_queue;
+	NSMutableArray *_work;
+	NSError *_error;
+	NSUInteger _status;
+	BOOL _owesSlot;                 /* this buffer holds one of the queue's slots */
+	NSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */
+	NSUInteger _protectionOptions;  /* what the window server asked for; see -setProtectionOptions: */
+}
+
+/*
+ * The window server sends this to every command buffer it makes, and until it was answered the
+ * boot of 22 October 01:51 ended it 78 times with
+ *
+ *   NSInvalidArgumentException: -[RedwoodMetalCommandBuffer setProtectionOptions:]:
+ *   unrecognized selector sent to instance
+ *
+ * -- an uncaught Objective-C exception out of CA::WindowServer::IOMFBServer::thread_body, which
+ * is terminate() and not a refusal we could read.
+ *
+ * It was missed by owes.py for a reason worth keeping: that tool counts what the PROTOCOLS
+ * require, and this pair is declared on a CLASS -- IOGPUMetalCommandBuffer, whose own
+ * _protectionOptions ivar it is. Our command buffer descends from _MTLCommandBuffer and not
+ * from IOGPU's, so nothing in the chain answers it and nothing in the protocol lists says it is
+ * missing. Every selector Apple's own counterpart class declares is a selector a caller may
+ * send, and the protocols are only part of that list.
+ *
+ * The value is kept and not honoured. Protected content means memory the GPU can read and the
+ * processor cannot, which this port has nothing to provide: a buffer of ours is ordinary memory
+ * on both sides. So a non-zero request says so once rather than being refused -- the window
+ * server asks for it on buffers that carry no protected content at all, and refusing would stop
+ * a composite that is in no danger.
+ */
+- (void)setProtectionOptions:(NSUInteger)options
+{
+	if (options != 0 && _protectionOptions != options) {
+		RW_ONCE("a command buffer was asked for protection options %lu, and this "
+			"driver has no protected memory to give: the request is kept and not honoured, "
+			"because nothing it would protect is protected here either\n",
+			(unsigned long)options);
+	}
+	_protectionOptions = options;
+}
+
+- (NSUInteger)protectionOptions
+{
+	return _protectionOptions;
+}
+
+- (instancetype)initWithRedwoodQueue:(RedwoodMetalCommandQueue *)queue
+{
+	/* what IOGPUMetalCommandBuffer sends to super, retained references and no debug mode.
+	 * THIS CALL BLOCKS when the queue's semaphore is empty -- see the long note above
+	 * RedwoodMetalCommandQueue -- so by the time it returns, a slot is held and owed. */
+	self = [super initWithQueue:queue retainedReferences:YES synchronousDebugMode:NO];
+	if (self == nil) {
+		return nil;
+	}
+	_queue = [queue retain];
+	_work = [[NSMutableArray alloc] init];
+	/* The numbering this log is written in, said once per process and printed out of the
+	 * constants that answer -status: a log that does NOT carry this line was written before
+	 * the numbers became Metal's, and says committed 3, scheduled 4, completed 6 (see the
+	 * note above this class). */
+	RW_ONCE("MTLCommandBufferStatus: committed %u, scheduled %u, completed %u, "
+		"error %u -- Metal's own numbers; a log without this line was written by the old "
+		"ones (committed 3, scheduled 4, completed 6)\n",
+		(unsigned)RW_CB_COMMITTED, (unsigned)RW_CB_SCHEDULED,
+		(unsigned)RW_CB_COMPLETED, (unsigned)RW_CB_ERROR);
+	_status = RW_CB_ENQUEUED;   /* nothing is pending yet */
+	_owesSlot = YES;
+	[queue redwoodTookSlot];
+	return self;
+}
+
+/*
+ * Give the queue's slot back, exactly once. Called at the end of -commit, where this
+ * driver's work is already done, and at -dealloc for a buffer that was never committed --
+ * which is the case Apple's _needsCommandBufferSemaphoreSignal exists for and the one that
+ * would otherwise lose a slot for the life of the process.
+ */
+- (void)redwoodReturnSlot
+{
+	dispatch_semaphore_t semaphore;
+
+	if (!_owesSlot) {
+		return;
+	}
+	_owesSlot = NO;
+	redwood_clear_semaphore_debt(self);
+	[_queue redwoodReturnedSlot];
+	semaphore = redwood_queue_semaphore(_queue);
+	if (semaphore != nil) {
+		dispatch_semaphore_signal(semaphore);
+	}
+}
+
+- (void)dealloc
+{
+	[self redwoodReturnSlot];
+	[_work release];
+	[_error release];
+	[_scheduled release];
+	[_completed release];
+	[_queue release];
+	[super dealloc];
+}
+
+- (id)device       { return [_queue device]; }
+- (id)commandQueue { return _queue; }
+- (NSUInteger)status { return _status; }
+- (NSError *)error { return _error; }
+- (BOOL)retainedReferences { return YES; }
+
+- (id)computeCommandEncoder
+{
+	return [[[RedwoodMetalComputeEncoder alloc] initWithRedwoodCommandBuffer:self]
+		   autorelease];
+}
+
+- (id)renderCommandEncoderWithDescriptor:(id)descriptor
+{
+	if (descriptor == nil) {
+		rw_print("a render pass needs a descriptor\n");
+		return nil;
+	}
+	return [[[RedwoodMetalRenderEncoder alloc] initWithRedwoodCommandBuffer:self
+								    descriptor:descriptor]
+		   autorelease];
+}
+
+- (id)parallelRenderCommandEncoderWithDescriptor:(id)descriptor
+{
+	(void)descriptor;
+	return nil;   /* one encoder at a time here; a parallel pass needs the split */
+}
 
 /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
  * absent, for the reason the device's own 44 were answered: a missing selector aborts the
